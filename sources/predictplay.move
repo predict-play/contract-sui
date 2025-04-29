@@ -29,6 +29,9 @@ module predictplay::predictplay {
     const MARKET_STATUS_RESOLVED: u8 = 2;
     // Virtual Liquidity
     const VIRTUAL_LIQUIDITY: u64 = 1_000_000_000; // 1 SUI in MIST
+    // Basis points constants
+    const BASIS_POINTS: u64 = 10000; // 100% in basis points
+    const INITIAL_PRICE: u64 = 5000; // 50% in basis points
 
     // === Structs ===
 
@@ -44,9 +47,9 @@ module predictplay::predictplay {
         game_id: u64,
         name: String,
         end_time: u64, // Timestamp in milliseconds
-        // Prices are implicit based on liquidity pool in AMM, not stored directly
-        // yes_price: u64,
-        // no_price: u64,
+        // Prices are stored directly, where P_yes + P_no = 1
+        yes_price: u64, // Price in basis points (10000 = 100%)
+        no_price: u64,  // Price in basis points (10000 = 100%)
         status: u8, // Using constants: 0: Active, 1: Closed, 2: Resolved
         resolved_outcome: std::option::Option<bool>, // Some(true) for YES, Some(false) for NO, None if not resolved
         // Liquidity will be managed via dedicated pools or balances associated with the market
@@ -100,6 +103,29 @@ module predictplay::predictplay {
 
     // === Init ===
 
+    // Helper function to calculate price change based on bet size relative to market liquidity
+    fun calculate_price_change(bet_amount: u64, total_liquidity: u64): u64 {
+        // If there is no liquidity, use the default price change value
+        if (total_liquidity == 0) {
+            500 // 5% change in basis points
+        } else {
+            // Calculate impact - larger bets relative to liquidity have a greater impact
+            let bet_u128 = bet_amount as u128;
+            let liquidity_u128 = (total_liquidity + VIRTUAL_LIQUIDITY) as u128;
+
+            // Impact formula: bet_amount * scale_factor / (total_liquidity + virtual_liquidity)
+            // Scaling factor (1000) controls the magnitude of price change per bet
+            let price_change_u128 = (bet_u128 * 1000) / liquidity_u128;
+
+            // Limit the maximum price change per transaction
+            if (price_change_u128 > 2000) {
+                2000 // Maximum 20% change
+            } else {
+                price_change_u128 as u64
+            }
+        }
+    }
+
     fun init(ctx: &mut TxContext) {
         // Create and transfer the Admin Capability to the publisher
         transfer::transfer(AdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
@@ -142,6 +168,8 @@ module predictplay::predictplay {
             game_id: game_id,
             name: name, // Original name is moved here
             end_time: end_time,
+            yes_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for YES
+            no_price: INITIAL_PRICE,  // Initial price of 0.5 (50%) for NO
             status: MARKET_STATUS_ACTIVE,
             // resolved_outcome is initially None
             resolved_outcome: std::option::none<bool>(),
@@ -184,43 +212,73 @@ module predictplay::predictplay {
         // 2. Get payment amount and current balances
         let sui_amount = coin::value(&sui_payment);
         assert!(sui_amount > 0, EInsufficientFunds);
-        let y_balance = balance::value(&market.yes_shares);
-        let n_balance = balance::value(&market.no_shares);
+        // We no longer need these variables, as the price is now stored directly in the market structure
+        // let y_balance = balance::value(&market.yes_shares);
+        // let n_balance = balance::value(&market.no_shares);
 
         // 3. Elevate to u128 for calculation
         let amount_u128 = sui_amount as u128;
-        let y_u128 = y_balance as u128;
-        let n_u128 = n_balance as u128;
-        let v_u128 = VIRTUAL_LIQUIDITY as u128;
+        // Remove unused variables
+        // let y_u128 = y_balance as u128;
+        // let n_u128 = n_balance as u128;
+        // let v_u128 = VIRTUAL_LIQUIDITY as u128;
 
-        // 4. Calculate shares bought using the simplified model formula
-        let denominator: u128 = y_u128 + n_u128 + (2 * v_u128);
-        assert!(denominator > 0, ECalculationError); // Should always be > 0 due to V
+        // 4. Calculate shares based on current price (which is the probability)
         let shares_bought: u64;
 
         if (is_yes) {
-            let numerator_y: u128 = y_u128 + v_u128;
-            assert!(numerator_y > 0, ECalculationError); // Should always be > 0
-            // shares = amount * (Y+N+2V) / (Y+V)
-            let shares_bought_u128 = (amount_u128 * denominator) / numerator_y;
-            // Basic overflow check (can be made more robust)
+            // Shares = amount / price (higher price = fewer shares per SUI)
+            let price_decimal = (market.yes_price as u128) * 100 / (BASIS_POINTS as u128); // Convert to decimal (0-100)
+            assert!(price_decimal > 0, ECalculationError); // Ensure price isn't zero
+            // Calculate shares: amount * 100 / price (normalized to percentage)
+            let shares_bought_u128 = (amount_u128 * 100) / price_decimal;
             assert!(shares_bought_u128 <= u64::max_value!() as u128, ECalculationError);
             shares_bought = shares_bought_u128 as u64;
 
             // 5. Add payment to YES balance
             balance::join(&mut market.yes_shares, coin::into_balance(sui_payment));
+
+            // Update market prices - increase YES price, decrease NO price
+            // The price change is proportional to the amount being added relative to existing liquidity
+            let price_change = calculate_price_change(sui_amount, market.total_liquidity);
+
+            // Ensure we don't exceed 100% or go below 0%
+            if (price_change < market.no_price) {
+                market.yes_price = market.yes_price + price_change;
+                market.no_price = market.no_price - price_change;
+            } else {
+                // Cap at 99% probability to avoid extreme prices
+                market.yes_price = 9900; // 99%
+                market.no_price = 100;   // 1%
+            }
         } else {
-            let numerator_n: u128 = n_u128 + v_u128;
-            assert!(numerator_n > 0, ECalculationError); // Should always be > 0
-            // shares = amount * (Y+N+2V) / (N+V)
-            let shares_bought_u128 = (amount_u128 * denominator) / numerator_n;
-            // Basic overflow check
+            // Shares = amount / price (higher price = fewer shares per SUI)
+            let price_decimal = (market.no_price as u128) * 100 / (BASIS_POINTS as u128); // Convert to decimal (0-100)
+            assert!(price_decimal > 0, ECalculationError); // Ensure price isn't zero
+            // Calculate shares: amount * 100 / price (normalized to percentage)
+            let shares_bought_u128 = (amount_u128 * 100) / price_decimal;
             assert!(shares_bought_u128 <= u64::max_value!() as u128, ECalculationError);
             shares_bought = shares_bought_u128 as u64;
 
             // 5. Add payment to NO balance
             balance::join(&mut market.no_shares, coin::into_balance(sui_payment));
+
+            // Update market prices - increase NO price, decrease YES price
+            let price_change = calculate_price_change(sui_amount, market.total_liquidity);
+
+            // Ensure we don't exceed 100% or go below 0%
+            if (price_change < market.yes_price) {
+                market.no_price = market.no_price + price_change;
+                market.yes_price = market.yes_price - price_change;
+            } else {
+                // Cap at 99% probability to avoid extreme prices
+                market.no_price = 9900; // 99%
+                market.yes_price = 100;  // 1%
+            }
         };
+
+        // Ensure prices always sum to 100%
+        assert!(market.yes_price + market.no_price == BASIS_POINTS, ECalculationError);
 
         // 6. Update market total liquidity tracking (simple sum of actual balances)
         // Recalculate based on balances *after* adding the payment
