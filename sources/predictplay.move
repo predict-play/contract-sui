@@ -77,6 +77,118 @@ module predictplay::predictplay {
         // total_liquidity: Balance<SUI> // Total liquidity managed across all markets
     }
 
+    // === Test-only functions ===
+
+    /// Create a Markets object for testing
+    #[test_only]
+    public fun create_markets_test_only(ctx: &mut TxContext) {
+        let markets_obj = Markets {
+            id: object::new(ctx),
+            next_market_id_counter: 0,
+            markets: table::new<u64, Market>(ctx),
+            positions: table::new<address, VecMap<u64, UserPosition>>(ctx),
+        };
+        // Share the object immediately after creation
+        transfer::share_object(markets_obj);
+    }
+
+    #[test_only]
+    /// Helper for creating a market in tests
+    public fun create_market_test_only(
+        markets_obj: &mut Markets,
+        game_id: u64,
+        name: String,
+        end_time: u64,
+        _clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        let market_id_counter = markets_obj.next_market_id_counter;
+        markets_obj.next_market_id_counter = market_id_counter + 1;
+
+        let sender = tx_context::sender(ctx);
+        let name_bytes = *ascii::as_bytes(&name);
+
+        let new_market = Market {
+            id: object::new(ctx),
+            game_id: game_id,
+            name: name,
+            end_time: end_time,
+            yes_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for YES
+            no_price: INITIAL_PRICE,  // Initial price of 0.5 (50%) for NO
+            status: MARKET_STATUS_ACTIVE,
+            resolved_outcome: std::option::none<bool>(),
+            yes_shares: balance::zero<SUI>(),
+            no_shares: balance::zero<SUI>(),
+            total_liquidity: 0,
+            creator: sender
+        };
+
+        // Add the market to the table
+        table::add(&mut markets_obj.markets, market_id_counter, new_market);
+
+        // Emit an event
+        event::emit(MarketCreated {
+            market_id: market_id_counter,
+            game_id: game_id,
+            name_bytes: name_bytes,
+            end_time: end_time,
+            creator: sender
+        });
+    }
+
+    #[test_only]
+    /// Get the prices of a market for testing
+    public fun get_market_prices_test_only(markets_obj: &Markets, market_id: u64): (u64, u64, u64) {
+        let market = table::borrow(&markets_obj.markets, market_id);
+        (market.yes_price, market.no_price, market.total_liquidity)
+    }
+
+    #[test_only]
+    /// Get market state including status and resolved outcome for testing
+    public fun get_market_state_test_only(markets_obj: &Markets, market_id: u64): (u64, u64, u8, bool) {
+        let market = table::borrow(&markets_obj.markets, market_id);
+        let outcome = if (std::option::is_some(&market.resolved_outcome)) {
+            *std::option::borrow(&market.resolved_outcome)
+        } else {
+            false // Default value if not resolved
+        };
+        (market.yes_price, market.no_price, market.status, outcome)
+    }
+
+    #[test_only]
+    /// Helper function to resolve a market in tests
+    public fun resolve_market_test_only(
+        markets_obj: &mut Markets,
+        market_id: u64,
+        outcome: bool,
+        _ctx: &mut TxContext
+    ) {
+        let market = table::borrow_mut(&mut markets_obj.markets, market_id);
+
+        // Set market status to resolved
+        market.status = MARKET_STATUS_RESOLVED;
+        market.resolved_outcome = std::option::some(outcome);
+
+        // Emit event
+        event::emit(MarketResolved {
+            market_id: market_id,
+            outcome: outcome
+        });
+    }
+
+    #[test_only]
+    /// Buy shares in a market for testing
+    public fun buy_shares_test_only(
+        markets_obj: &mut Markets,
+        market_id: u64,
+        is_yes: bool,
+        sui_payment: Coin<SUI>,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        // Delegate to the main implementation
+        buy_shares(markets_obj, market_id, is_yes, sui_payment, clock, ctx)
+    }
 
     // === Events ===
 
@@ -102,8 +214,7 @@ module predictplay::predictplay {
     }
 
     // === Init ===
-
-    // Helper function to calculate price change based on bet size relative to market liquidity
+    /// Helper function to calculate price change based on bet size relative to market liquidity
     fun calculate_price_change(bet_amount: u64, total_liquidity: u64): u64 {
         // If there is no liquidity, use the default price change value
         if (total_liquidity == 0) {
@@ -126,7 +237,9 @@ module predictplay::predictplay {
         }
     }
 
-    fun init(ctx: &mut TxContext) {
+    #[test_only]
+    /// Initialize the PredictPlay protocol
+    fun init(ctx: &mut TxContext) { 
         // Create and transfer the Admin Capability to the publisher
         transfer::transfer(AdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
 
@@ -135,7 +248,6 @@ module predictplay::predictplay {
             id: object::new(ctx),
             next_market_id_counter: 0,
             markets: table::new<u64, Market>(ctx),
-            // Updated value type in table creation
             positions: table::new<address, VecMap<u64, UserPosition>>(ctx)
             // total_liquidity: balance::zero<SUI>()
         });
