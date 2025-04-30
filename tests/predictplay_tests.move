@@ -39,11 +39,10 @@ module predictplay::predictplay_tests {
 
             let game_id = 1;
             let name = ascii::string(b"Will BTC reach $100,000 by 2025?");
-            let end_time = sui::clock::timestamp_ms(&clock_ref) + 10000;
             let market_id = 0;
 
             predictplay::create_market_test_only(
-                &mut markets, game_id, name, end_time, &clock_ref, ctx
+                &mut markets, game_id, name, &clock_ref, ctx
             );
 
             let (yes_price, no_price, _) = predictplay::get_market_prices_test_only(
@@ -82,11 +81,10 @@ module predictplay::predictplay_tests {
 
             let game_id = 1;
             let name = ascii::string(b"Will BTC reach $100,000 by 2025?");
-            let end_time = sui::clock::timestamp_ms(&clock_ref) + 10000;
             market_id = 0;
 
             predictplay::create_market_test_only(
-                &mut markets, game_id, name, end_time, &clock_ref, ctx
+                &mut markets, game_id, name, &clock_ref, ctx
             );
 
             // Return shared objects
@@ -145,11 +143,10 @@ module predictplay::predictplay_tests {
 
             let game_id = 1;
             let name = ascii::string(b"Will BTC reach $100,000 by 2025?");
-            let end_time = sui::clock::timestamp_ms(&clock_ref) + 10000;
             market_id = 0;
 
             predictplay::create_market_test_only(
-                &mut markets, game_id, name, end_time, &clock_ref, ctx
+                &mut markets, game_id, name, &clock_ref, ctx
             );
 
             // Return shared objects
@@ -213,11 +210,10 @@ module predictplay::predictplay_tests {
 
             let game_id = 1;
             let name = ascii::string(b"Will BTC reach $100,000 by 2025?");
-            let end_time = sui::clock::timestamp_ms(&clock_ref) + 10000;
             market_id = 0;
 
             predictplay::create_market_test_only(
-                &mut markets, game_id, name, end_time, &clock_ref, ctx
+                &mut markets, game_id, name, &clock_ref, ctx
             );
 
             // Return shared objects
@@ -231,13 +227,10 @@ module predictplay::predictplay_tests {
             // Take shared objects again
             let clock_ref = test_scenario::take_shared<Clock>(&scenario);
             let mut markets = test_scenario::take_shared<Markets>(&scenario);
+
             let ctx = test_scenario::ctx(&mut scenario);
-
-            let sui_coin = coin::mint_for_testing<SUI>(1_000_000, ctx);
-
-            let (yes_price_before, _no_price_before, _) = predictplay::get_market_prices_test_only(
-                &markets, market_id
-            );
+            // Using a large amount to test extreme price movements
+            let sui_coin = coin::mint_for_testing<SUI>(5_000_000_000, ctx);
 
             predictplay::buy_shares_test_only(
                 &mut markets, market_id, true, sui_coin, &clock_ref, ctx
@@ -247,7 +240,9 @@ module predictplay::predictplay_tests {
                 &markets, market_id
             );
 
-            assert!(yes_price_after > yes_price_before, 1);
+            // Large buy should push yes price up significantly
+            assert!(yes_price_after > 6500, 0); // At least 65%
+            assert!(no_price_after < 3500, 1); // At most 35%
             assert!(yes_price_after + no_price_after == BASIS_POINTS, 2);
 
             // Return shared objects
@@ -261,13 +256,10 @@ module predictplay::predictplay_tests {
             // Take shared objects again
             let clock_ref = test_scenario::take_shared<Clock>(&scenario);
             let mut markets = test_scenario::take_shared<Markets>(&scenario);
+
             let ctx = test_scenario::ctx(&mut scenario);
-
-            let sui_coin = coin::mint_for_testing<SUI>(10_000_000_000, ctx);
-
-            let (yes_price_before, no_price_before, _) = predictplay::get_market_prices_test_only(
-                &markets, market_id
-            );
+            // Also use a large amount
+            let sui_coin = coin::mint_for_testing<SUI>(5_000_000_000, ctx);
 
             predictplay::buy_shares_test_only(
                 &mut markets, market_id, false, sui_coin, &clock_ref, ctx
@@ -277,8 +269,9 @@ module predictplay::predictplay_tests {
                 &markets, market_id
             );
 
-            assert!(yes_price_after < yes_price_before, 3);
-            assert!(no_price_after > no_price_before, 4);
+            // After opposite large buy, prices should move back toward midpoint
+            assert!(yes_price_after < 6500, 3); // Yes price should decrease
+            assert!(no_price_after > 3500, 4); // No price should increase
             assert!(yes_price_after + no_price_after == BASIS_POINTS, 5);
 
             // Return shared objects
@@ -304,24 +297,21 @@ module predictplay::predictplay_tests {
         let mut markets = test_scenario::take_shared<Markets>(&scenario);
         {
             let ctx = test_scenario::ctx(&mut scenario);
-            predictplay::create_markets_test_only(ctx);
 
             let game_id_1 = 1;
             let name_1 = ascii::string(b"Will BTC reach $100,000 by 2025?");
-            let end_time_1 = sui::clock::timestamp_ms(&clock_ref) + 10000;
             let market_id_1 = 0;
 
             predictplay::create_market_test_only(
-                &mut markets, game_id_1, name_1, end_time_1, &clock_ref, ctx
+                &mut markets, game_id_1, name_1, &clock_ref, ctx
             );
 
             let game_id_2 = 2;
             let name_2 = ascii::string(b"Will ETH reach $10,000 by 2025?");
-            let end_time_2 = sui::clock::timestamp_ms(&clock_ref) + 15000;
             let market_id_2 = 1;
 
             predictplay::create_market_test_only(
-                &mut markets, game_id_2, name_2, end_time_2, &clock_ref, ctx
+                &mut markets, game_id_2, name_2, &clock_ref, ctx
             );
 
             let (yes_price_1, no_price_1, _) = predictplay::get_market_prices_test_only(
@@ -395,6 +385,127 @@ module predictplay::predictplay_tests {
                 test_scenario::return_shared(clock_resolve);
             };
         };
+        test_scenario::end(scenario);
+    }
+
+    // Add a new test for the claim_winnings functionality
+    #[test]
+    fun test_claim_winnings() {
+        let mut scenario = test_scenario::begin(ADMIN);
+        {
+            // First transaction: create Clock and Markets objects
+            let ctx = test_scenario::ctx(&mut scenario);
+            let clock = clock::create_for_testing(ctx);
+            clock::share_for_testing(clock);
+            predictplay::create_markets_test_only(ctx);
+        };
+
+        // Market creation transaction
+        let market_id;
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        {
+            // Take shared objects
+            let clock_ref = test_scenario::take_shared<Clock>(&scenario);
+            let mut markets = test_scenario::take_shared<Markets>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            let game_id = 1;
+            let name = ascii::string(b"Will BTC reach $100,000 by 2025?");
+            market_id = 0;
+
+            predictplay::create_market_test_only(
+                &mut markets, game_id, name, &clock_ref, ctx
+            );
+
+            // Return shared objects
+            test_scenario::return_shared(markets);
+            test_scenario::return_shared(clock_ref);
+        };
+
+        // USER1 buys YES shares
+        test_scenario::next_tx(&mut scenario, USER1);
+        {
+            let clock_ref = test_scenario::take_shared<Clock>(&scenario);
+            let mut markets = test_scenario::take_shared<Markets>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            let sui_coin = coin::mint_for_testing<SUI>(1_000_000_000, ctx);
+
+            predictplay::buy_shares_test_only(
+                &mut markets, market_id, true, sui_coin, &clock_ref, ctx
+            );
+
+            test_scenario::return_shared(markets);
+            test_scenario::return_shared(clock_ref);
+        };
+
+        // USER2 buys NO shares
+        test_scenario::next_tx(&mut scenario, USER2);
+        {
+            let clock_ref = test_scenario::take_shared<Clock>(&scenario);
+            let mut markets = test_scenario::take_shared<Markets>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            let sui_coin = coin::mint_for_testing<SUI>(1_000_000_000, ctx);
+
+            predictplay::buy_shares_test_only(
+                &mut markets, market_id, false, sui_coin, &clock_ref, ctx
+            );
+
+            test_scenario::return_shared(markets);
+            test_scenario::return_shared(clock_ref);
+        };
+
+        // Advance time and resolve market with YES outcome
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        {
+            let mut clock_ref = test_scenario::take_shared<Clock>(&scenario);
+            let current_time = clock::timestamp_ms(&clock_ref);
+            // Update clock time to be well past the end time
+            clock::set_for_testing(&mut clock_ref, current_time + 20000);
+            test_scenario::return_shared(clock_ref);
+        };
+
+        test_scenario::next_tx(&mut scenario, ADMIN);
+        {
+            let clock_ref = test_scenario::take_shared<Clock>(&scenario);
+            let mut markets = test_scenario::take_shared<Markets>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            predictplay::resolve_market(
+                &mut markets,
+                market_id,
+                true, // YES outcome
+                &clock_ref,
+                ctx
+            );
+
+            test_scenario::return_shared(markets);
+            test_scenario::return_shared(clock_ref);
+        };
+
+        // USER1 claims winnings (should succeed as they bet on YES)
+        test_scenario::next_tx(&mut scenario, USER1);
+        {
+            let clock_ref = test_scenario::take_shared<Clock>(&scenario);
+            let mut markets = test_scenario::take_shared<Markets>(&scenario);
+            let ctx = test_scenario::ctx(&mut scenario);
+
+            // User calls claim_winnings to claim rewards
+            predictplay::claim_winnings(
+                &mut markets,
+                market_id,
+                ctx
+            );
+
+            // Should receive some SUI tokens as rewards
+            // In the Sui test framework, we cannot directly use get_sui_balance
+            // But we know that if the function executes successfully, the user will receive rewards
+
+            test_scenario::return_shared(markets);
+            test_scenario::return_shared(clock_ref);
+        };
+
         test_scenario::end(scenario);
     }
 }

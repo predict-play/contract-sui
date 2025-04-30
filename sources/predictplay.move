@@ -19,6 +19,7 @@ const EUnauthorized: u64 = 5;
 const EMarketNotClosed: u64 = 6;
 const EPositionNotFound: u64 = 8; // Error for user position lookup failure
 const ECalculationError: u64 = 9; // Error for mathematical calculation issues
+const EPeriodTooSmall: u64 = 10; // Error for period too small
 
 // === Market Status ===
 const MARKET_STATUS_ACTIVE: u8 = 0;
@@ -269,11 +270,13 @@ public entry fun create_market(
     game_id: u64,
     name: String, // Function receives ownership of name
     clock: &Clock, // Need Clock object to get current time
+    period_minutes: u64,
     ctx: &mut TxContext,
 ) {
-    // Set market end time to 1000 minutes from now (can be adjusted as needed)
+    // Set market end time to period minutes from now
     let current_timestamp = clock::timestamp_ms(clock);
-    let end_time = current_timestamp + 1000 * 60 * 1000; // 1000 minutes later
+    assert!(period_minutes > 10, EPeriodTooSmall);
+    let end_time = current_timestamp + period_minutes * 60 * 1000; // period minutes later
 
     let market_id_counter = markets_obj.next_market_id_counter;
     markets_obj.next_market_id_counter = market_id_counter + 1;
@@ -360,8 +363,7 @@ public fun get_markets_list(markets_obj: &Markets, start: u64, limit: u64): vect
                     status: market.status,
                     total_liquidity: market.total_liquidity,
                     creator: market.creator,
-                    // resolved_outcome is Option<bool>, might need specific handling or separate struct field
-                    // resolved_outcome: market.resolved_outcome,
+                    resolved_outcome: market.resolved_outcome,
                 },
             );
             count = count + 1;
@@ -383,7 +385,7 @@ public struct MarketInfo has copy, drop, store {
     status: u8,
     total_liquidity: u64,
     creator: address,
-    // resolved_outcome: std::option::Option<bool>, // Add if needed
+    resolved_outcome: std::option::Option<bool>,
 }
 
 /// Returns the current prices of a market (yes price, no price, total liquidity)
