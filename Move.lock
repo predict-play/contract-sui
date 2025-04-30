@@ -2,7 +2,7 @@
 
 [move]
 version = 3
-manifest_digest = "C8ECBBB61417E48A31E6C95A13E083CC0B2A06FAE7392A1CC50C04E31D6E4703"
+manifest_digest = "4FB917AFDC7772D171B0268FA0F4DE10502E05DA4CEDDFFB3660702E2D202440"
 deps_digest = "F9B494B64F0615AED0E98FC12A85B85ECD2BC5185C22D30E7F67786BB52E507C"
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -13,7 +13,7 @@ dependencies = [
 
 [[move.package]]
 id = "Bridge"
-source = { git = "https://github.com/MystenLabs/sui.git", rev = "e54b798790ed", subdir = "crates/sui-framework/packages/bridge" }
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "fbb68879cbd1", subdir = "crates/sui-framework/packages/bridge" }
 
 dependencies = [
   { id = "MoveStdlib", name = "MoveStdlib" },
@@ -23,11 +23,11 @@ dependencies = [
 
 [[move.package]]
 id = "MoveStdlib"
-source = { git = "https://github.com/MystenLabs/sui.git", rev = "e54b798790ed", subdir = "crates/sui-framework/packages/move-stdlib" }
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "fbb68879cbd1", subdir = "crates/sui-framework/packages/move-stdlib" }
 
 [[move.package]]
 id = "Sui"
-source = { git = "https://github.com/MystenLabs/sui.git", rev = "e54b798790ed", subdir = "crates/sui-framework/packages/sui-framework" }
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "fbb68879cbd1", subdir = "crates/sui-framework/packages/sui-framework" }
 
 dependencies = [
   { id = "MoveStdlib", name = "MoveStdlib" },
@@ -35,7 +35,7 @@ dependencies = [
 
 [[move.package]]
 id = "SuiSystem"
-source = { git = "https://github.com/MystenLabs/sui.git", rev = "e54b798790ed", subdir = "crates/sui-framework/packages/sui-system" }
+source = { git = "https://github.com/MystenLabs/sui.git", rev = "fbb68879cbd1", subdir = "crates/sui-framework/packages/sui-system" }
 
 dependencies = [
   { id = "MoveStdlib", name = "MoveStdlib" },
@@ -46,3 +46,17 @@ dependencies = [
 compiler-version = "1.48.0"
 edition = "2024.beta"
 flavor = "sui"
+
+[env]
+
+[env.testnet]
+chain-id = "4c78adac"
+original-published-id = "0x65f14be1fe2c3732bd261eff673750c9cc03f2f2fe4fcfc4874b191c8aa7f2e6"
+latest-published-id = "0x65f14be1fe2c3732bd261eff673750c9cc03f2f2fe4fcfc4874b191c8aa7f2e6"
+published-version = "1"
+
+[env.local]
+chain-id = "8b54d055"
+original-published-id = "0x0c46d5d4a8d843a4169cdd2a9392bc334a9701232784335ff297c7ede4c0ee7e"
+latest-published-id = "0x0c46d5d4a8d843a4169cdd2a9392bc334a9701232784335ff297c7ede4c0ee7e"
+published-version = "1"
