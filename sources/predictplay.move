@@ -24,6 +24,7 @@ module predictplay::predictplay {
     const ECalculationError: u64 = 91; // Error for mathematical calculation issues
     const ECalculation2Error: u64 = 92; // Error for mathematical calculation issues
     const EPeriodTooSmall: u64 = 10; // Error for period too small
+    const EOutcomeError: u64 = 11;
 
     // === Market Status ===
     const MARKET_STATUS_ACTIVE: u8 = 0;
@@ -65,7 +66,7 @@ module predictplay::predictplay {
         yes_price: u64, // Price in basis points (10000 = 100%)
         no_price: u64, // Price in basis points (10000 = 100%)
         status: u8, // Using constants: 0: Active, 1: Closed, 2: Resolved
-        resolved_outcome: std::option::Option<bool>, // Some(true) for YES, Some(false) for NO, None if not resolved
+        resolved_outcome: u8, // 1 for YES, 2 for NO, 0 if not resolved
         // Liquidity will be managed via dedicated pools or balances associated with the market
         yes_liquidity: Balance<SUI>, // Shares representing YES outcome (acts like liquidity)
         no_liquidity: Balance<SUI>, // Shares representing NO outcome (acts like liquidity)
@@ -107,7 +108,7 @@ module predictplay::predictplay {
 
     public struct MarketResolved has copy, drop {
         market_id: u64,
-        outcome: bool, // true for YES, false for NO
+        outcome: u8, // 1 for YES, 2 for NO
     }
 
     // Define a struct to hold the information returned by get_markets_list
@@ -124,7 +125,7 @@ module predictplay::predictplay {
         status: u8,
         total_liquidity: u64,
         creator: address,
-        resolved_outcome: std::option::Option<bool>,
+        resolved_outcome: u8,
     }
 
     // === Init ===
@@ -180,7 +181,7 @@ module predictplay::predictplay {
     ) {
         // Set market end time to period minutes from now
         let current_timestamp = clock::timestamp_ms(clock);
-        assert!(period_minutes > 10, EPeriodTooSmall);
+        assert!(period_minutes >= 3, EPeriodTooSmall);
         let end_time = current_timestamp + period_minutes * 60 * 1000; // period minutes later
 
         let market_id_counter = markets_obj.next_market_id_counter;
@@ -200,7 +201,7 @@ module predictplay::predictplay {
             no_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for NO
             status: MARKET_STATUS_ACTIVE,
             // resolved_outcome is initially None
-            resolved_outcome: std::option::none<bool>(),
+            resolved_outcome: 0,
             yes_liquidity: balance::zero<SUI>(),
             no_liquidity: balance::zero<SUI>(),
             total_liquidity: 0, // Starts with zero actual liquidity
@@ -574,10 +575,12 @@ module predictplay::predictplay {
     public entry fun resolve_market(
         markets_obj: &mut Markets,
         market_id: u64,
-        outcome: bool, // true for YES, false for NO
+        outcome: u8, // true for YES, false for NO
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
+        assert!(outcome > 0, EOutcomeError);
+
         // 1. Check that market exists and get mutable reference
         assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
         let market = table::borrow_mut(&mut markets_obj.markets, market_id);
@@ -595,9 +598,9 @@ module predictplay::predictplay {
 
         // 5. Update market status and set resolved outcome
         market.status = MARKET_STATUS_RESOLVED;
-        market.resolved_outcome = std::option::some(outcome);
+        market.resolved_outcome = outcome;
 
-        if (outcome) {
+        if (outcome == 1) {
             let no_balance = balance::withdraw_all(&mut market.no_liquidity);
             balance::join(&mut market.yes_liquidity, no_balance);
         } else {
@@ -625,7 +628,11 @@ module predictplay::predictplay {
         assert!(market.status == MARKET_STATUS_RESOLVED, EMarketNotClosed);
 
         // 2. Get resolved outcome (should be Some since market is resolved)
-        let resolved_outcome = *std::option::borrow(&market.resolved_outcome);
+        let resolved_outcome = if (&market.resolved_outcome == 1) {
+            true
+        } else {
+           false
+        };
 
         // 3. Check if user has a position in this market
         let sender = tx_context::sender(ctx);
@@ -735,7 +742,7 @@ module predictplay::predictplay {
             yes_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for YES
             no_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for NO
             status: MARKET_STATUS_ACTIVE,
-            resolved_outcome: std::option::none<bool>(),
+            resolved_outcome: 0,
             yes_liquidity: balance::zero<SUI>(),
             no_liquidity: balance::zero<SUI>(),
             total_liquidity: 0,
@@ -769,8 +776,8 @@ module predictplay::predictplay {
         market_id: u64,
     ): (u64, u64, u8, bool) {
         let market = table::borrow(&markets_obj.markets, market_id);
-        let outcome = if (std::option::is_some(&market.resolved_outcome)) {
-            *std::option::borrow(&market.resolved_outcome)
+        let outcome = if (&market.resolved_outcome == 1) {
+            true
         } else {
             false // Default value if not resolved
         };
@@ -782,14 +789,14 @@ module predictplay::predictplay {
     public fun resolve_market_test_only(
         markets_obj: &mut Markets,
         market_id: u64,
-        outcome: bool,
+        outcome: u8,
         _ctx: &mut TxContext,
     ) {
         let market = table::borrow_mut(&mut markets_obj.markets, market_id);
 
         // Set market status to resolved
         market.status = MARKET_STATUS_RESOLVED;
-        market.resolved_outcome = std::option::some(outcome);
+        market.resolved_outcome = outcome;
 
         // Emit event
         event::emit(MarketResolved {
