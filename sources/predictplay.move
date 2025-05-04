@@ -67,6 +67,8 @@ module predictplay::predictplay {
         no_price: u64, // Price in basis points (10000 = 100%)
         status: u8, // Using constants: 0: Active, 1: Closed, 2: Resolved
         resolved_outcome: u8, // 1 for YES, 2 for NO, 0 if not resolved
+        yes_shares: u64,
+        no_shares: u64,
         // Liquidity will be managed via dedicated pools or balances associated with the market
         yes_liquidity: Balance<SUI>, // Shares representing YES outcome (acts like liquidity)
         no_liquidity: Balance<SUI>, // Shares representing NO outcome (acts like liquidity)
@@ -181,7 +183,7 @@ module predictplay::predictplay {
     ) {
         // Set market end time to period minutes from now
         let current_timestamp = clock::timestamp_ms(clock);
-        assert!(period_minutes >= 3, EPeriodTooSmall);
+        assert!(period_minutes >= 1, EPeriodTooSmall);
         let end_time = current_timestamp + period_minutes * 60 * 1000; // period minutes later
 
         let market_id_counter = markets_obj.next_market_id_counter;
@@ -202,6 +204,8 @@ module predictplay::predictplay {
             status: MARKET_STATUS_ACTIVE,
             // resolved_outcome is initially None
             resolved_outcome: 0,
+            yes_shares: 0,
+            no_shares: 0,
             yes_liquidity: balance::zero<SUI>(),
             no_liquidity: balance::zero<SUI>(),
             total_liquidity: 0, // Starts with zero actual liquidity
@@ -435,8 +439,10 @@ module predictplay::predictplay {
         // Add the bought shares to the user's position
         if (is_yes) {
             user_market_position.yes_shares = user_market_position.yes_shares + shares_bought;
+            market.yes_shares = market.yes_shares + shares_bought;
         } else {
             user_market_position.no_shares = user_market_position.no_shares + shares_bought;
+            market.no_shares = market.no_shares + shares_bought;
         };
 
         // 8. Emit event
@@ -493,6 +499,7 @@ module predictplay::predictplay {
 
             // 4. Update user position
             user_market_position.yes_shares = user_market_position.yes_shares - shares_amount;
+            market.yes_shares = market.yes_shares - shares_amount;
 
             // 5. Update market prices - decrease YES price, increase NO price
             let price_change = calculate_price_change(sui_return_amount, market.total_liquidity);
@@ -520,6 +527,7 @@ module predictplay::predictplay {
 
             // 4. Update user position
             user_market_position.no_shares = user_market_position.no_shares - shares_amount;
+            market.no_shares = market.no_shares - shares_amount;
 
             // 5. Update market prices - decrease NO price, increase YES price
             let price_change = calculate_price_change(sui_return_amount, market.total_liquidity);
@@ -665,6 +673,12 @@ module predictplay::predictplay {
             balance::value(&market.no_liquidity)
         };
 
+        let total_winning_shares = if (resolved_outcome) {
+            market.yes_shares
+        } else {
+            market.no_shares
+        };
+
         // Calculate user's share of the total winning pool
         let total_liquidity = market.total_liquidity;
         // Avoid division by zero if the winning pool somehow has zero balance (shouldn't happen if winning_shares > 0)
@@ -672,7 +686,7 @@ module predictplay::predictplay {
         // Use u128 for intermediate calculation to prevent overflow
         let user_share_percentage_numerator = (winning_shares as u128) * 10000;
         let user_share_percentage =
-            user_share_percentage_numerator / (total_winning_pool_size as u128);
+            user_share_percentage_numerator / (total_winning_shares as u128);
 
         // Calculate winnings as proportion of total liquidity
         let user_winnings_numerator = (total_liquidity as u128) * user_share_percentage;
@@ -686,6 +700,7 @@ module predictplay::predictplay {
         };
 
         // Ensure we don't try to split more than available in the pool
+        // todo: fixme: A rough solution to the precision problem is to use the entire remaining amount if > the remaining amount
         assert!(user_winnings <= balance::value(winning_pool_balance), ECalculation2Error);
 
         let reward_balance = balance::split(winning_pool_balance, user_winnings);
@@ -742,6 +757,8 @@ module predictplay::predictplay {
             yes_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for YES
             no_price: INITIAL_PRICE, // Initial price of 0.5 (50%) for NO
             status: MARKET_STATUS_ACTIVE,
+            yes_shares:0,
+            no_shares:0,
             resolved_outcome: 0,
             yes_liquidity: balance::zero<SUI>(),
             no_liquidity: balance::zero<SUI>(),
