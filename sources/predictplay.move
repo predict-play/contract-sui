@@ -19,11 +19,9 @@ const EMarketNotFound: u64 = 0;
 const EMarketAlreadyClosed: u64 = 1;
 const EMarketAlreadyResolved: u64 = 2;
 const EInsufficientFunds: u64 = 3;
-const EUnauthorized: u64 = 5;
 const EMarketNotClosed: u64 = 6;
 const EPositionNotFound: u64 = 8; // Error for user position lookup failure
 const ECalculationError: u64 = 91; // Error for mathematical calculation issues
-const ECalculation2Error: u64 = 92; // Error for mathematical calculation issues
 const EPeriodTooSmall: u64 = 10; // Error for period too small
 const EOutcomeError: u64 = 11;
 
@@ -175,6 +173,7 @@ fun init(ctx: &mut TxContext) {
 /// Creates a new prediction market.
 /// Only requires game_id and market name, market_id is auto-incremented and end_time is calculated automatically.
 public entry fun create_market(
+    _: &AdminCap,
     markets_obj: &mut Markets,
     game_id: u64,
     name: String, // Function receives ownership of name
@@ -582,11 +581,12 @@ public entry fun sell_shares(
 /// Only the market creator can call this function
 /// Market must be active and its end time must have passed
 public entry fun resolve_market(
+    _: &AdminCap,
     markets_obj: &mut Markets,
     market_id: u64,
     outcome: u8, // true for YES, false for NO
     clock: &Clock,
-    ctx: &mut TxContext,
+    _: &mut TxContext,
 ) {
     assert!(outcome > 0, EOutcomeError);
 
@@ -595,8 +595,8 @@ public entry fun resolve_market(
     let market = table::borrow_mut(&mut markets_obj.markets, market_id);
 
     // 2. Check that caller is the market creator
-    let sender = tx_context::sender(ctx);
-    assert!(sender == market.creator, EUnauthorized);
+    // let sender = tx_context::sender(ctx);
+    // assert!(sender == market.creator, EUnauthorized);
 
     // 3. Check that market is active and not already resolved
     assert!(market.status == MARKET_STATUS_ACTIVE, EMarketAlreadyResolved);
@@ -686,7 +686,7 @@ public entry fun claim_winnings(markets_obj: &mut Markets, market_id: u64, ctx: 
 
     // Calculate winnings as proportion of total liquidity
     let user_winnings_numerator = (total_liquidity as u128) * user_share_percentage;
-    let user_winnings = (user_winnings_numerator / 10000) as u64;
+    let mut user_winnings = (user_winnings_numerator / 10000) as u64;
 
     // 7. Transfer winnings to user
     let winning_pool_balance = if (resolved_outcome) {
@@ -696,8 +696,10 @@ public entry fun claim_winnings(markets_obj: &mut Markets, market_id: u64, ctx: 
     };
 
     // Ensure we don't try to split more than available in the pool
-    // todo: fixme: A rough solution to the precision problem is to use the entire remaining amount if > the remaining amount
-    assert!(user_winnings <= balance::value(winning_pool_balance), ECalculation2Error);
+    // fixme: A rough solution to the precision problem is to use the entire remaining amount if > the remaining amount
+    if (user_winnings > balance::value(winning_pool_balance)){
+        user_winnings = balance::value(winning_pool_balance);
+    };
 
     let reward_balance = balance::split(winning_pool_balance, user_winnings);
     let reward_coin = coin::from_balance(reward_balance, ctx);
