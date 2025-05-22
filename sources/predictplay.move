@@ -4,8 +4,9 @@ use std::ascii::{Self, String};
 use std::u64;
 use sui::balance::{Self, Balance};
 use sui::clock::{Self, Clock};
-use sui::coin::{Self, Coin};
+use sui::coin::{Self, Coin, TreasuryCap};
 use sui::event;
+use sui::package;
 use sui::sui::SUI;
 use sui::table::{Self, Table};
 use sui::vec_map::{Self, VecMap};
@@ -13,6 +14,16 @@ use sui::vec_map::{Self, VecMap};
 const VERSION: u64 = 3;
 
 public fun package_version(): u64 { VERSION }
+
+// === Coin Types ===
+/// One-time witness for the module
+public struct PREDICTPLAY has drop {}
+
+/// One-time witness for the YES coin type
+public struct YES has drop {}
+
+/// One-time witness for the NO coin type
+public struct NO has drop {}
 
 // === Errors ===
 const EMarketNotFound: u64 = 0;
@@ -78,6 +89,14 @@ public struct Market has key, store {
 /// Capability required to manage the PredictPlay protocol
 public struct AdminCap has key {
     id: UID,
+}
+
+/// Treasury caps for YES and NO coins
+public struct MarketTreasury has key {
+    id: UID,
+    market_id: u64,
+    yes_treasury_cap: TreasuryCap<YES>,
+    no_treasury_cap: TreasuryCap<NO>,
 }
 
 // === Events ===
@@ -168,7 +187,10 @@ fun calculate_price_change(bet_amount: u64, total_liquidity: u64): u64 {
 }
 
 /// Initialize the PredictPlay protocol
-fun init(ctx: &mut TxContext) {
+fun init(witness: PREDICTPLAY, ctx: &mut TxContext) {
+    // Claim the publisher
+    let publisher = package::claim(witness, ctx);
+
     // Create and transfer the Admin Capability to the publisher
     transfer::transfer(AdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
 
@@ -180,6 +202,38 @@ fun init(ctx: &mut TxContext) {
         positions: table::new<address, VecMap<u64, UserPosition>>(ctx),
         // total_liquidity: balance::zero<SUI>()
     });
+
+    // Create the YES and NO coin types
+    let (yes_treasury, yes_metadata) = coin::create_currency<YES>(
+        YES {},
+        9, // 9 decimals like SUI
+        b"YES",
+        b"YES Outcome Token",
+        b"Prediction market YES outcome token",
+        option::none(),
+        ctx
+    );
+
+    let (no_treasury, no_metadata) = coin::create_currency<NO>(
+        NO {},
+        9, // 9 decimals like SUI
+        b"NO",
+        b"NO Outcome Token",
+        b"Prediction market NO outcome token",
+        option::none(),
+        ctx
+    );
+
+    // Freeze the metadata objects
+    transfer::public_freeze_object(yes_metadata);
+    transfer::public_freeze_object(no_metadata);
+
+    // Transfer the treasury caps to the publisher
+    transfer::public_transfer(yes_treasury, tx_context::sender(ctx));
+    transfer::public_transfer(no_treasury, tx_context::sender(ctx));
+
+    // Destroy the publisher
+    package::burn_publisher(publisher);
 }
 
 // === Functions (Entry points and helpers will be added here) ===
@@ -207,6 +261,50 @@ public entry fun create_market(
 
     // Get name bytes for the event before moving the original name
     let name_bytes = *ascii::as_bytes(&name); // Copy the bytes vector with the dereference operator *
+
+    // Create market-specific YES and NO coin types
+    let market_name_bytes = *ascii::as_bytes(&name);
+    let mut yes_name = b"YES-";
+    vector::append(&mut yes_name, market_name_bytes);
+
+    let mut no_name = b"NO-";
+    vector::append(&mut no_name, market_name_bytes);
+
+    // Create YES and NO treasury caps for this market
+    let (yes_treasury, yes_metadata) = coin::create_currency<YES>(
+        YES {},
+        9, // 9 decimals like SUI
+        yes_name,
+        b"YES Outcome Token",
+        b"Prediction market YES outcome token",
+        option::none(),
+        ctx
+    );
+
+    let (no_treasury, no_metadata) = coin::create_currency<NO>(
+        NO {},
+        9, // 9 decimals like SUI
+        no_name,
+        b"NO Outcome Token",
+        b"Prediction market NO outcome token",
+        option::none(),
+        ctx
+    );
+
+    // Freeze the metadata objects
+    transfer::public_freeze_object(yes_metadata);
+    transfer::public_freeze_object(no_metadata);
+
+    // Create the market treasury object
+    let market_treasury = MarketTreasury {
+        id: object::new(ctx),
+        market_id: market_id_counter,
+        yes_treasury_cap: yes_treasury,
+        no_treasury_cap: no_treasury,
+    };
+
+    // Transfer the market treasury to the admin
+    transfer::transfer(market_treasury, sender);
 
     let new_market = Market {
         id: object::new(ctx),
@@ -332,6 +430,43 @@ public fun calculate_sui_needed_for_shares(
         let sui_amount = (shares_amount as u128) * price_decimal / 100;
         (sui_amount as u64)
     }
+}
+
+/// Mint YES or NO coins for a user based on their shares
+public fun mint_outcome_coins(
+    treasury: &mut MarketTreasury,
+    is_yes: bool,
+    amount: u64,
+    recipient: address,
+    ctx: &mut TxContext
+) {
+    if (is_yes) {
+        // Mint YES coins
+        let yes_coin = coin::mint(&mut treasury.yes_treasury_cap, amount, ctx);
+        transfer::public_transfer(yes_coin, recipient);
+    } else {
+        // Mint NO coins
+        let no_coin = coin::mint(&mut treasury.no_treasury_cap, amount, ctx);
+        transfer::public_transfer(no_coin, recipient);
+    }
+}
+
+/// Burn YES coins
+public fun burn_yes_coins(
+    treasury: &mut MarketTreasury,
+    coins: Coin<YES>
+) {
+    // Burn YES coins
+    coin::burn(&mut treasury.yes_treasury_cap, coins);
+}
+
+/// Burn NO coins
+public fun burn_no_coins(
+    treasury: &mut MarketTreasury,
+    coins: Coin<NO>
+) {
+    // Burn NO coins
+    coin::burn(&mut treasury.no_treasury_cap, coins);
 }
 
 /// Allows a user to buy YES or NO shares (outcome tokens) in a market.
@@ -467,6 +602,12 @@ public entry fun buy_shares(
         sui_amount: sui_amount,
         shares_bought: shares_bought,
     });
+
+    // 9. Mint outcome coins for the user
+    // Note: In a real implementation, you would need to retrieve the MarketTreasury object
+    // This is a simplified version that shows the concept
+    // let treasury = borrow_market_treasury(market_id);
+    // mint_outcome_coins(treasury, is_yes, shares_bought, sender, ctx);
 }
 
 /// Allows a user to sell YES or NO shares they previously bought in a market.
@@ -744,6 +885,35 @@ public fun create_markets_test_only(ctx: &mut TxContext) {
 
     // Create and transfer AdminCap for testing
     transfer::transfer(AdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
+
+    // Create the YES and NO coin types for testing
+    let (yes_treasury, yes_metadata) = coin::create_currency<YES>(
+        YES {},
+        9, // 9 decimals like SUI
+        b"YES",
+        b"YES Outcome Token",
+        b"Prediction market YES outcome token",
+        option::none(),
+        ctx
+    );
+
+    let (no_treasury, no_metadata) = coin::create_currency<NO>(
+        NO {},
+        9, // 9 decimals like SUI
+        b"NO",
+        b"NO Outcome Token",
+        b"Prediction market NO outcome token",
+        option::none(),
+        ctx
+    );
+
+    // Freeze the metadata objects
+    transfer::public_freeze_object(yes_metadata);
+    transfer::public_freeze_object(no_metadata);
+
+    // Transfer the treasury caps to the publisher
+    transfer::public_transfer(yes_treasury, tx_context::sender(ctx));
+    transfer::public_transfer(no_treasury, tx_context::sender(ctx));
 }
 
 #[test_only]
@@ -763,6 +933,50 @@ public fun create_market_test_only(
 
     let sender = tx_context::sender(ctx);
     let name_bytes = *ascii::as_bytes(&name);
+
+    // Create market-specific YES and NO coin types for testing
+    let market_name_bytes = *ascii::as_bytes(&name);
+    let mut yes_name = b"YES-";
+    vector::append(&mut yes_name, market_name_bytes);
+
+    let mut no_name = b"NO-";
+    vector::append(&mut no_name, market_name_bytes);
+
+    // Create YES and NO treasury caps for this market
+    let (yes_treasury, yes_metadata) = coin::create_currency<YES>(
+        YES {},
+        9, // 9 decimals like SUI
+        yes_name,
+        b"YES Outcome Token",
+        b"Prediction market YES outcome token",
+        option::none(),
+        ctx
+    );
+
+    let (no_treasury, no_metadata) = coin::create_currency<NO>(
+        NO {},
+        9, // 9 decimals like SUI
+        no_name,
+        b"NO Outcome Token",
+        b"Prediction market NO outcome token",
+        option::none(),
+        ctx
+    );
+
+    // Freeze the metadata objects
+    transfer::public_freeze_object(yes_metadata);
+    transfer::public_freeze_object(no_metadata);
+
+    // Create the market treasury object
+    let market_treasury = MarketTreasury {
+        id: object::new(ctx),
+        market_id: market_id_counter,
+        yes_treasury_cap: yes_treasury,
+        no_treasury_cap: no_treasury,
+    };
+
+    // Transfer the market treasury to the admin
+    transfer::transfer(market_treasury, sender);
 
     let new_market = Market {
         id: object::new(ctx),
