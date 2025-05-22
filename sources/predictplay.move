@@ -132,21 +132,35 @@ public struct MarketInfo has copy, drop, store {
 // === Init ===
 /// Helper function to calculate price change based on bet size relative to market liquidity
 fun calculate_price_change(bet_amount: u64, total_liquidity: u64): u64 {
+    // Special handling: If the bet amount is extremely large (considering SUI precision: 1 SUI = 10^9 MIST)
+    // When the bet exceeds 30 SUI, it is considered a large bet amount
+    if (bet_amount > 30_000_000_000) { // 30 SUI
+        // For large bets, we use a more significant price impact
+        // Return different price changes based on the bet amount
+        if (bet_amount > 100_000_000_000) { // Over 100 SUI large bet
+            return 1500 // 15% price change
+        } else if (bet_amount > 50_000_000_000) { // 50-100 SUI bet
+            return 1000 // 10% price change
+        } else { // 30-50 SUI bet
+            return 700 // 7% price change
+        }
+    };
+
     // If there is no liquidity, use the default price change value
     if (total_liquidity == 0) {
         500 // 5% change in basis points
     } else {
-        // Calculate impact - larger bets relative to liquidity have a greater impact
+        // Calculate impact - the ratio of bet amount to liquidity determines price impact
         let bet_u128 = bet_amount as u128;
         let liquidity_u128 = (total_liquidity + VIRTUAL_LIQUIDITY) as u128;
 
         // Impact formula: bet_amount * scale_factor / (total_liquidity + virtual_liquidity)
-        // Scaling factor (1000) controls the magnitude of price change per bet
-        let price_change_u128 = (bet_u128 * 1000) / liquidity_u128;
+        // Scale factor controls the price change per bet
+        let price_change_u128 = (bet_u128 * 1200) / liquidity_u128;
 
         // Limit the maximum price change per transaction
-        if (price_change_u128 > 2000) {
-            2000 // Maximum 20% change
+        if (price_change_u128 > 1500) {
+            1500 // Maximum 15% change
         } else {
             price_change_u128 as u64
         }
@@ -727,6 +741,9 @@ public fun create_markets_test_only(ctx: &mut TxContext) {
     };
     // Share the object immediately after creation
     transfer::share_object(markets_obj);
+
+    // Create and transfer AdminCap for testing
+    transfer::transfer(AdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
 }
 
 #[test_only]
@@ -798,12 +815,9 @@ public fun get_market_state_test_only(markets_obj: &Markets, market_id: u64): (u
 
 #[test_only]
 /// Helper function to resolve a market in tests
-public fun resolve_market_test_only(
-    markets_obj: &mut Markets,
-    market_id: u64,
-    outcome: u8,
-    _ctx: &mut TxContext,
-) {
+public fun resolve_market_test_only(markets_obj: &mut Markets, market_id: u64, outcome: u8, _clock: &Clock) {
+    // Validate the market ID exists
+    assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
     let market = table::borrow_mut(&mut markets_obj.markets, market_id);
 
     // Set market status to resolved
