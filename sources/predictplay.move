@@ -19,10 +19,10 @@ public fun package_version(): u64 { VERSION }
 /// One-time witness for the module
 public struct PREDICTPLAY has drop {}
 
-/// One-time witness for the YES coin type
+/// YES coin type for market outcomes
 public struct YES has drop {}
 
-/// One-time witness for the NO coin type
+/// NO coin type for market outcomes
 public struct NO has drop {}
 
 // === Errors ===
@@ -62,6 +62,8 @@ public struct Markets has key {
     // Store user positions: User Address -> Market ID -> UserPosition
     // Updated value type to UserPosition
     positions: Table<address, VecMap<u64, UserPosition>>,
+    // Store market treasuries: Market ID -> MarketTreasury
+    treasuries: Table<u64, MarketTreasury>,
     // market_creators: Table<u64, address>, // Creator stored within Market struct
     // total_liquidity: Balance<SUI> // Total liquidity managed across all markets
 }
@@ -91,8 +93,8 @@ public struct AdminCap has key {
     id: UID,
 }
 
-/// Treasury caps for YES and NO coins
-public struct MarketTreasury has key {
+/// Treasury caps for market-specific YES and NO coins
+public struct MarketTreasury has key, store {
     id: UID,
     market_id: u64,
     yes_treasury_cap: TreasuryCap<YES>,
@@ -200,37 +202,9 @@ fun init(witness: PREDICTPLAY, ctx: &mut TxContext) {
         next_market_id_counter: 0,
         markets: table::new<u64, Market>(ctx),
         positions: table::new<address, VecMap<u64, UserPosition>>(ctx),
+        treasuries: table::new<u64, MarketTreasury>(ctx),
         // total_liquidity: balance::zero<SUI>()
     });
-
-    // Create the YES and NO coin types
-    let (yes_treasury, yes_metadata) = coin::create_currency<YES>(
-        YES {},
-        9, // 9 decimals like SUI
-        b"YES",
-        b"YES Outcome Token",
-        b"Prediction market YES outcome token",
-        option::none(),
-        ctx
-    );
-
-    let (no_treasury, no_metadata) = coin::create_currency<NO>(
-        NO {},
-        9, // 9 decimals like SUI
-        b"NO",
-        b"NO Outcome Token",
-        b"Prediction market NO outcome token",
-        option::none(),
-        ctx
-    );
-
-    // Freeze the metadata objects
-    transfer::public_freeze_object(yes_metadata);
-    transfer::public_freeze_object(no_metadata);
-
-    // Transfer the treasury caps to the publisher
-    transfer::public_transfer(yes_treasury, tx_context::sender(ctx));
-    transfer::public_transfer(no_treasury, tx_context::sender(ctx));
 
     // Destroy the publisher
     package::burn_publisher(publisher);
@@ -303,8 +277,8 @@ public entry fun create_market(
         no_treasury_cap: no_treasury,
     };
 
-    // Transfer the market treasury to the admin
-    transfer::transfer(market_treasury, sender);
+    // Store the market treasury in the markets object
+    table::add(&mut markets_obj.treasuries, market_id_counter, market_treasury);
 
     let new_market = Market {
         id: object::new(ctx),
@@ -404,6 +378,12 @@ public fun get_market_prices(markets_obj: &Markets, market_id: u64): (u64, u64, 
     (market.yes_price, market.no_price, market.total_liquidity)
 }
 
+/// Borrows a mutable reference to the MarketTreasury for a specific market
+public fun borrow_market_treasury(markets_obj: &mut Markets, market_id: u64): &mut MarketTreasury {
+    assert!(table::contains(&markets_obj.treasuries, market_id), EMarketNotFound);
+    table::borrow_mut(&mut markets_obj.treasuries, market_id)
+}
+
 /// Calculates how many SUI tokens are needed to buy a specific amount of shares
 /// Returns the required SUI amount in MIST (1 SUI = 10^9 MIST)
 public fun calculate_sui_needed_for_shares(
@@ -432,23 +412,28 @@ public fun calculate_sui_needed_for_shares(
     }
 }
 
-/// Mint YES or NO coins for a user based on their shares
-public fun mint_outcome_coins(
+/// Mint YES coins for a user based on their shares
+public fun mint_yes_coins(
     treasury: &mut MarketTreasury,
-    is_yes: bool,
     amount: u64,
     recipient: address,
     ctx: &mut TxContext
 ) {
-    if (is_yes) {
-        // Mint YES coins
-        let yes_coin = coin::mint(&mut treasury.yes_treasury_cap, amount, ctx);
-        transfer::public_transfer(yes_coin, recipient);
-    } else {
-        // Mint NO coins
-        let no_coin = coin::mint(&mut treasury.no_treasury_cap, amount, ctx);
-        transfer::public_transfer(no_coin, recipient);
-    }
+    // Mint YES coins
+    let yes_coin = coin::mint(&mut treasury.yes_treasury_cap, amount, ctx);
+    transfer::public_transfer(yes_coin, recipient);
+}
+
+/// Mint NO coins for a user based on their shares
+public fun mint_no_coins(
+    treasury: &mut MarketTreasury,
+    amount: u64,
+    recipient: address,
+    ctx: &mut TxContext
+) {
+    // Mint NO coins
+    let no_coin = coin::mint(&mut treasury.no_treasury_cap, amount, ctx);
+    transfer::public_transfer(no_coin, recipient);
 }
 
 /// Burn YES coins
@@ -604,10 +589,12 @@ public entry fun buy_shares(
     });
 
     // 9. Mint outcome coins for the user
-    // Note: In a real implementation, you would need to retrieve the MarketTreasury object
-    // This is a simplified version that shows the concept
-    // let treasury = borrow_market_treasury(market_id);
-    // mint_outcome_coins(treasury, is_yes, shares_bought, sender, ctx);
+    let treasury = borrow_market_treasury(markets_obj, market_id);
+    if (is_yes) {
+        mint_yes_coins(treasury, shares_bought, sender, ctx);
+    } else {
+        mint_no_coins(treasury, shares_bought, sender, ctx);
+    }
 }
 
 /// Allows a user to sell YES or NO shares they previously bought in a market.
@@ -616,6 +603,8 @@ public entry fun sell_shares(
     market_id: u64,
     is_yes: bool,
     shares_amount: u64,
+    yes_coins: Coin<YES>,
+    no_coins: Coin<NO>,
     clock: &Clock,
     _slip: u64,
     ctx: &mut TxContext,
@@ -637,11 +626,19 @@ public entry fun sell_shares(
 
     let user_market_position = vec_map::get_mut(user_positions_map, &market_id);
 
+    // Verify the user has enough shares and the correct amount of coins
     if (is_yes) {
         assert!(user_market_position.yes_shares >= shares_amount, EInsufficientFunds);
+        // Check if the user has provided the correct amount of YES coins
+        assert!(coin::value(&yes_coins) == shares_amount, EInsufficientFunds);
     } else {
         assert!(user_market_position.no_shares >= shares_amount, EInsufficientFunds);
+        // Check if the user has provided the correct amount of NO coins
+        assert!(coin::value(&no_coins) == shares_amount, EInsufficientFunds);
     };
+
+    // We need to handle the coins differently to avoid borrowing issues
+    // We'll burn the coins at the end of the function
 
     // 3. Calculate SUI amount to return based on current price and execute the trade
     let sui_return_amount: u64; // Define the return amount outside both branches
@@ -674,6 +671,8 @@ public entry fun sell_shares(
         let balance_split = balance::split(&mut market.yes_liquidity, sui_return_amount);
         let coin_to_return = coin::from_balance(balance_split, ctx);
         sui::transfer::public_transfer(coin_to_return, sender);
+
+        // We'll burn the coins at the end of the function
     } else {
         // Calculate SUI to return: shares * price / 100 (price is in percentage)
         let price_decimal = (market.no_price as u128) * 100 / (BASIS_POINTS as u128); // Convert to decimal (0-100)
@@ -702,6 +701,8 @@ public entry fun sell_shares(
         let balance_split = balance::split(&mut market.no_liquidity, sui_return_amount);
         let coin_to_return = coin::from_balance(balance_split, ctx);
         sui::transfer::public_transfer(coin_to_return, sender);
+
+        // We'll burn the coins at the end of the function
     };
 
     // Ensure prices always sum to 100%
@@ -721,7 +722,13 @@ public entry fun sell_shares(
         }
     };
 
-    // 9. Emit event for position close
+    // 9. Now that we're done with all operations that borrow markets_obj, we can burn the coins
+    let treasury = borrow_market_treasury(markets_obj, market_id);
+    // Burn both YES and NO coins to ensure all Coin values are properly consumed, regardless of branch
+    burn_yes_coins(treasury, yes_coins);
+    burn_no_coins(treasury, no_coins);
+
+    // 10. Emit event for position close
     let event = PositionClosed {
         market_id,
         user: sender,
@@ -781,7 +788,13 @@ public entry fun resolve_market(
 /// Allows a user to claim their winnings from a resolved market
 /// The market must be resolved before claiming
 /// Only users who bet on the winning outcome can claim rewards
-public entry fun claim_winnings(markets_obj: &mut Markets, market_id: u64, ctx: &mut TxContext) {
+public entry fun claim_winnings(
+    markets_obj: &mut Markets,
+    market_id: u64,
+    yes_coins: Coin<YES>,
+    no_coins: Coin<NO>,
+    ctx: &mut TxContext
+) {
     // 1. Check that market exists and is resolved
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
     let market = table::borrow_mut(&mut markets_obj.markets, market_id);
@@ -793,6 +806,8 @@ public entry fun claim_winnings(markets_obj: &mut Markets, market_id: u64, ctx: 
     } else {
         false
     };
+
+    // We'll burn the coins at the end of the function to avoid borrowing issues
 
     // 3. Check if user has a position in this market
     let sender = tx_context::sender(ctx);
@@ -866,7 +881,13 @@ public entry fun claim_winnings(markets_obj: &mut Markets, market_id: u64, ctx: 
     // Optional: Clean up user's position map if it becomes empty
     if (vec_map::is_empty(positions_map)) {
         table::remove(&mut markets_obj.positions, sender);
-    }
+    };
+
+    // Now that we're done with all operations that borrow markets_obj, we can burn the coins
+    let treasury = borrow_market_treasury(markets_obj, market_id);
+    // Burn both YES and NO coins to consume the parameters regardless of outcome
+    burn_yes_coins(treasury, yes_coins);
+    burn_no_coins(treasury, no_coins);
 }
 
 // === Test-only functions ===
@@ -879,41 +900,13 @@ public fun create_markets_test_only(ctx: &mut TxContext) {
         next_market_id_counter: 0,
         markets: table::new<u64, Market>(ctx),
         positions: table::new<address, VecMap<u64, UserPosition>>(ctx),
+        treasuries: table::new<u64, MarketTreasury>(ctx),
     };
     // Share the object immediately after creation
     transfer::share_object(markets_obj);
 
     // Create and transfer AdminCap for testing
     transfer::transfer(AdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
-
-    // Create the YES and NO coin types for testing
-    let (yes_treasury, yes_metadata) = coin::create_currency<YES>(
-        YES {},
-        9, // 9 decimals like SUI
-        b"YES",
-        b"YES Outcome Token",
-        b"Prediction market YES outcome token",
-        option::none(),
-        ctx
-    );
-
-    let (no_treasury, no_metadata) = coin::create_currency<NO>(
-        NO {},
-        9, // 9 decimals like SUI
-        b"NO",
-        b"NO Outcome Token",
-        b"Prediction market NO outcome token",
-        option::none(),
-        ctx
-    );
-
-    // Freeze the metadata objects
-    transfer::public_freeze_object(yes_metadata);
-    transfer::public_freeze_object(no_metadata);
-
-    // Transfer the treasury caps to the publisher
-    transfer::public_transfer(yes_treasury, tx_context::sender(ctx));
-    transfer::public_transfer(no_treasury, tx_context::sender(ctx));
 }
 
 #[test_only]
@@ -975,8 +968,8 @@ public fun create_market_test_only(
         no_treasury_cap: no_treasury,
     };
 
-    // Transfer the market treasury to the admin
-    transfer::transfer(market_treasury, sender);
+    // Store the market treasury in the markets object
+    table::add(&mut markets_obj.treasuries, market_id_counter, market_treasury);
 
     let new_market = Market {
         id: object::new(ctx),
@@ -1058,4 +1051,33 @@ public fun buy_shares_test_only(
     // todo: _slip
     // Delegate to the main implementation
     buy_shares(markets_obj, market_id, is_yes, sui_payment, clock, 0, ctx)
+}
+
+#[test_only]
+/// Sell shares in a market for testing
+public fun sell_shares_test_only(
+    markets_obj: &mut Markets,
+    market_id: u64,
+    is_yes: bool,
+    shares_amount: u64,
+    yes_coins: Coin<YES>,
+    no_coins: Coin<NO>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    // Delegate to the main implementation
+    sell_shares(markets_obj, market_id, is_yes, shares_amount, yes_coins, no_coins, clock, 0, ctx)
+}
+
+#[test_only]
+/// Claim winnings from a market for testing
+public fun claim_winnings_test_only(
+    markets_obj: &mut Markets,
+    market_id: u64,
+    yes_coins: Coin<YES>,
+    no_coins: Coin<NO>,
+    ctx: &mut TxContext,
+) {
+    // Delegate to the main implementation
+    claim_winnings(markets_obj, market_id, yes_coins, no_coins, ctx)
 }
