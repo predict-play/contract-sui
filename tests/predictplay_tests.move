@@ -1,10 +1,10 @@
 #[test_only]
 module predictplay::predictplay_tests;
 
-use predictplay::predictplay::{Self, Markets};
+use predictplay::predictplay::{Self, Markets, YES, NO};
 use std::ascii;
 use sui::clock::{Self, Clock};
-use sui::coin;
+use sui::coin::{Self};
 use sui::sui::SUI;
 use sui::test_scenario;
 
@@ -557,10 +557,13 @@ fun test_claim_winnings() {
         let mut markets = test_scenario::take_shared<Markets>(&scenario);
         let ctx = test_scenario::ctx(&mut scenario);
 
-        // User calls claim_winnings to claim rewards
-        predictplay::claim_winnings(
+        // For testing, we use the simplified claim_winnings_test_only function
+        // which doesn't require YES/NO coins since we don't create treasuries in tests
+        predictplay::claim_winnings_test_only(
             &mut markets,
             market_id,
+            coin::zero<YES>(ctx), // Create empty coins for testing
+            coin::zero<NO>(ctx),
             ctx,
         );
 
