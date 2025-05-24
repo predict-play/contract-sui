@@ -1,68 +1,118 @@
-# PredictPlay: Decentralized Prediction Markets on Sui
+# PredictPlay - Prediction Market Platform on Sui Blockchain
 
-PredictPlay is a decentralized prediction market platform built on the Sui blockchain. It allows users to create markets for predicting outcomes of various events, trade shares representing those outcomes, and earn rewards for correct predictions.
+<p align="center">
+  <img src="predictplay_logo.png" alt="PredictPlay Logo" width="200">
+</p>
 
-## Overview
+<div align="center">
+  <strong>Decentralized Prediction Market Protocol Built on Sui Move</strong>
+</div>
 
-This platform implements a prediction market mechanism where:
-- Users can create markets for specific events or games
-- Users can buy shares in YES or NO outcomes
-- Market prices are automatically adjusted based on trading activity
-- Markets are resolved when outcomes are determined
-- Users who predicted correctly can claim rewards
+<div align="center">
+  <sub>Create Markets · Buy Shares · Predict Outcomes · Earn Rewards</sub>
+</div>
 
-The platform uses an automated market maker model with a CFMM (Constant Function Market Maker) approach to ensure liquidity and determine fair prices based on market activity.
+<br />
 
-## Key Features
+## 📖 Project Overview
 
-- **Market Creation**: Create prediction markets for various events with customizable duration
-- **Share Trading**: Buy and sell YES/NO shares in markets
-- **Dynamic Pricing**: Prices automatically adjust based on market activity
-- **Market Resolution**: Markets are officially resolved when outcomes are determined
-- **Reward Distribution**: Winners can claim rewards proportional to their share ownership
+PredictPlay is a decentralized prediction market platform running on the Sui blockchain, allowing users to create prediction markets for various events, buy and sell shares of different outcomes, and claim rewards after market resolution.
 
-## Core Functions
+The protocol leverages Automated Market Maker (AMM) mechanisms and liquidity pools to ensure efficient market operations while providing a fair and transparent trading environment for participants.
 
-### Market Management
+## ✨ Core Features
 
-- `create_market()`: Creates a new prediction market with specified parameters
-- `get_markets_list()`: Returns a list of available markets with their details
-- `get_market_prices()`: Returns current prices and liquidity for a specific market
-- `resolve_market()`: Resolves a market with the final outcome (YES or NO)
+- **Create Prediction Markets**: Anyone can create prediction markets for future events
+- **YES/NO Share Trading**: Users can buy or sell shares representing possible event outcomes
+- **Dynamic Pricing Mechanism**: Prices automatically adjust based on market liquidity and trading volume
+- **Outcome Settlement**: Users holding shares of the winning outcome can claim rewards after market closure
+- **Virtual Liquidity**: Uses virtual liquidity to ensure smooth market operations
 
-### User Interactions
+## 🔧 Technical Architecture
 
-- `buy_shares()`: Purchase YES or NO shares in a market
-- `sell_shares()`: Sell previously purchased shares
-- `get_user_position()`: Returns a user's current position in a specific market
-- `claim_winnings()`: Allows winners to claim their rewards after market resolution
+### Main Modules
 
-### Price Mechanism
+- **predictplay.move**: Core protocol logic containing market creation, trading, and settlement functionality
+- **yes_coin.move**: Definition and management of YES outcome tokens
+- **no_coin.move**: Definition and management of NO outcome tokens
 
-- `calculate_sui_needed_for_shares()`: Calculates the amount of SUI required to purchase a specified number of shares
-- Price adjustments are made automatically according to the CFMM model, ensuring that:
-  - Prices always sum to 100%
-  - Price impact is limited per transaction
-  - Liquidity is maintained for both outcomes
+### Key Structures
 
-## Technical Details
+- **Markets**: Shared object storing all market data
+- **Market**: Represents a single prediction market, containing name, end time, price, and liquidity information
+- **UserPosition**: Stores a user's share holdings in a specific market
 
-The platform is built using Sui Move and leverages:
-- Sui's object model for market data storage
-- Tables for efficient data access
-- Events for tracking market activities
-- Balance management for handling SUI tokens
+## 🚀 How to Use
 
-## Getting Started
+### Prerequisites
 
-To interact with PredictPlay, you need to:
-1. Connect to the Sui network
-2. Access the PredictPlay module
-3. Create or participate in prediction markets through the provided functions
+- Install [Sui CLI](https://docs.sui.io/build/install)
+- Have some SUI tokens for transactions
 
-## Security Features
+### Deploy Contract
 
-- Market time constraints ensure fair participation
-- Price impact limitations prevent market manipulation
-- Balance validation ensures proper fund management
-- Role-based access controls for administrative functions
+```bash
+sui client publish --gas-budget 100000000
+```
+
+### Create Prediction Market
+
+```bash
+sui client call --package <PACKAGE_ID> --module predictplay --function create_market --args <ADMIN_CAP> <MARKETS_OBJ> <GAME_ID> <NAME> <CLOCK_OBJ> <PERIOD_MINUTES> --gas-budget 10000000
+```
+
+### Buy Shares
+
+```bash
+sui client call --package <PACKAGE_ID> --module predictplay --function buy_shares --args <MARKETS_OBJ> <MARKET_ID> <IS_YES> <SHARES_AMOUNT> <SUI_COIN> <CLOCK_OBJ> <SLIPPAGE_BP> --gas-budget 10000000
+```
+
+### Sell Shares
+
+```bash
+sui client call --package <PACKAGE_ID> --module predictplay --function sell_shares --args <MARKETS_OBJ> <MARKET_ID> <IS_YES> <SHARES_AMOUNT> <YES_COINS> <NO_COINS> <CLOCK_OBJ> <SLIPPAGE_BP> --gas-budget 10000000
+```
+
+### Claim Rewards
+
+```bash
+sui client call --package <PACKAGE_ID> --module predictplay --function claim_winnings --args <MARKETS_OBJ> <MARKET_ID> <YES_COINS> <NO_COINS> --gas-budget 10000000
+```
+
+## 📊 Market Mechanism
+
+### Price Calculation
+
+PredictPlay uses a liquidity-based dynamic pricing mechanism:
+
+- Each market has YES and NO outcomes, with prices always summing to 100%
+- Initial prices are set at 50%/50%
+- The ratio of transaction amount to market liquidity determines price impact
+- Maximum price change limits prevent excessive price impact from large trades
+
+### Virtual Liquidity
+
+To ensure smooth market operations, the system introduces the concept of virtual liquidity:
+
+- Initial virtual liquidity is set at 1 SUI (10^9 MIST)
+- Virtual liquidity is not actual funds, only used for price calculations
+- Helps reduce the excessive impact of small trades on prices
+
+## 📜 Project Status
+
+Current version: v3
+
+## 🔮 Future Plans
+
+- Add more market types
+- Implement fee sharing for market creators
+- Introduce liquidity provider incentives
+- Develop a user-friendly frontend interface
+
+## 👥 Contribution Guidelines
+
+Contributions are welcome! Please fork this repository and submit a pull request.
+
+## 📄 License
+
+[MIT](LICENSE)

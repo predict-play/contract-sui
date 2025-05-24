@@ -56,6 +56,11 @@ fun test_market_creation() {
         assert!(no_price == INITIAL_PRICE, 1);
         assert!(yes_price + no_price == BASIS_POINTS, 2);
 
+        // Test that we can get user position (should be 0,0 initially)
+        let (yes_shares, no_shares) = predictplay::get_user_position(&markets, market_id, ADMIN);
+        assert!(yes_shares == 0, 3);
+        assert!(no_shares == 0, 4);
+
         // Return shared objects before ending the transaction
         test_scenario::return_shared(markets);
         test_scenario::return_shared(clock_ref);
