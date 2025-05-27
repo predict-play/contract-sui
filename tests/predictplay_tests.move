@@ -1,7 +1,9 @@
 #[test_only]
 module predictplay::predictplay_tests;
 
-use predictplay::predictplay::{Self, Markets, YES, NO};
+use predictplay::predictplay::{Self, Markets};
+use predictplay::yes_coin::YES_COIN;
+use predictplay::no_coin::NO_COIN;
 use std::ascii;
 use sui::clock::{Self, Clock};
 use sui::coin::{Self};
@@ -567,8 +569,8 @@ fun test_claim_winnings() {
         predictplay::claim_winnings_test_only(
             &mut markets,
             market_id,
-            coin::zero<YES>(ctx), // Create empty coins for testing
-            coin::zero<NO>(ctx),
+            coin::zero<YES_COIN>(ctx), // Create empty coins for testing
+            coin::zero<NO_COIN>(ctx),
             ctx,
         );
 

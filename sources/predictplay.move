@@ -11,10 +11,6 @@ use sui::sui::SUI;
 use sui::table::{Self, Table};
 use sui::vec_map::{Self, VecMap};
 use sui::types;
-use sui::transfer;
-use sui::object::{Self, UID};
-use sui::tx_context::{Self, TxContext};
-use std::option;
 use predictplay::yes_coin::YES_COIN;
 use predictplay::no_coin::NO_COIN;
 
@@ -850,8 +846,8 @@ public entry fun claim_winnings(
 public fun create_markets_test_only(ctx: &mut TxContext) {
     // For testing, we create dummy treasury caps using mint_for_testing
     // This avoids the one-time witness issue in tests
-    let yes_treasury = coin::create_treasury_cap_for_testing<YES>(ctx);
-    let no_treasury = coin::create_treasury_cap_for_testing<NO>(ctx);
+    let yes_treasury = coin::create_treasury_cap_for_testing<YES_COIN>(ctx);
+    let no_treasury = coin::create_treasury_cap_for_testing<NO_COIN>(ctx);
 
     let markets_obj = Markets {
         id: object::new(ctx),
