@@ -1,5 +1,7 @@
 module predictplay::predictplay;
 
+use predictplay::no_coin::NO_COIN;
+use predictplay::yes_coin::YES_COIN;
 use std::ascii::{Self, String};
 use std::u64;
 use sui::balance::{Self, Balance};
@@ -9,10 +11,8 @@ use sui::event;
 use sui::package;
 use sui::sui::SUI;
 use sui::table::{Self, Table};
-use sui::vec_map::{Self, VecMap};
 use sui::types;
-use predictplay::yes_coin::YES_COIN;
-use predictplay::no_coin::NO_COIN;
+use sui::vec_map::{Self, VecMap};
 
 const VERSION: u64 = 3;
 
@@ -91,8 +91,6 @@ public struct AdminCap has key {
     id: UID,
 }
 
-
-
 // === Events ===
 
 public struct MarketCreated has copy, drop {
@@ -147,14 +145,18 @@ public struct MarketInfo has copy, drop, store {
 fun calculate_price_change(bet_amount: u64, total_liquidity: u64): u64 {
     // Special handling: If the bet amount is extremely large (considering SUI precision: 1 SUI = 10^9 MIST)
     // When the bet exceeds 30 SUI, it is considered a large bet amount
-    if (bet_amount > 30_000_000_000) { // 30 SUI
+    if (bet_amount > 30_000_000_000) {
+        // 30 SUI
         // For large bets, we use a more significant price impact
         // Return different price changes based on the bet amount
-        if (bet_amount > 100_000_000_000) { // Over 100 SUI large bet
+        if (bet_amount > 100_000_000_000) {
+            // Over 100 SUI large bet
             return 1500 // 15% price change
-        } else if (bet_amount > 50_000_000_000) { // 50-100 SUI bet
+        } else if (bet_amount > 50_000_000_000) {
+            // 50-100 SUI bet
             return 1000 // 10% price change
-        } else { // 30-50 SUI bet
+        } else {
+            // 30-50 SUI bet
             return 700 // 7% price change
         }
     };
@@ -205,8 +207,19 @@ fun init(otw: PREDICTPLAY, ctx: &mut TxContext) {
     package::burn_publisher(publisher);
 }
 
-
 // === Functions (Entry points and helpers will be added here) ===
+
+/// Set treasury caps for YES and NO coins (called after deployment)
+public entry fun set_treasury_caps(
+    _: &AdminCap,
+    markets_obj: &mut Markets,
+    yes_treasury_cap: TreasuryCap<YES_COIN>,
+    no_treasury_cap: TreasuryCap<NO_COIN>,
+) {
+    // Set the treasury caps
+    option::fill(&mut markets_obj.yes_treasury_cap, yes_treasury_cap);
+    option::fill(&mut markets_obj.no_treasury_cap, no_treasury_cap);
+}
 
 /// Creates a new prediction market.
 /// Only requires game_id and market name, market_id is auto-incremented and end_time is calculated automatically.
@@ -363,7 +376,7 @@ public fun mint_yes_coins(
     markets_obj: &mut Markets,
     amount: u64,
     recipient: address,
-    ctx: &mut TxContext
+    ctx: &mut TxContext,
 ) {
     // Check if Treasury exists
     assert!(option::is_some(&markets_obj.yes_treasury_cap), ECalculationError);
@@ -379,7 +392,7 @@ public fun mint_no_coins(
     markets_obj: &mut Markets,
     amount: u64,
     recipient: address,
-    ctx: &mut TxContext
+    ctx: &mut TxContext,
 ) {
     // Check if Treasury exists
     assert!(option::is_some(&markets_obj.no_treasury_cap), ECalculationError);
@@ -391,10 +404,7 @@ public fun mint_no_coins(
 }
 
 /// Burn YES coins
-public fun burn_yes_coins(
-    markets_obj: &mut Markets,
-    coins: Coin<YES_COIN>
-) {
+public fun burn_yes_coins(markets_obj: &mut Markets, coins: Coin<YES_COIN>) {
     // Check if Treasury exists
     assert!(option::is_some(&markets_obj.yes_treasury_cap), ECalculationError);
     // Use option::borrow_mut to get mutable reference
@@ -404,10 +414,7 @@ public fun burn_yes_coins(
 }
 
 /// Burn NO coins
-public fun burn_no_coins(
-    markets_obj: &mut Markets,
-    coins: Coin<NO_COIN>
-) {
+public fun burn_no_coins(markets_obj: &mut Markets, coins: Coin<NO_COIN>) {
     // Check if Treasury exists
     assert!(option::is_some(&markets_obj.no_treasury_cap), ECalculationError);
     // Use option::borrow_mut to get mutable reference
@@ -753,7 +760,7 @@ public entry fun claim_winnings(
     market_id: u64,
     yes_coins: Coin<YES_COIN>,
     no_coins: Coin<NO_COIN>,
-    ctx: &mut TxContext
+    ctx: &mut TxContext,
 ) {
     // 1. Check that market exists and is resolved
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
@@ -817,7 +824,7 @@ public entry fun claim_winnings(
     };
 
     // Ensure we don't try to split more than available in the pool
-    if (user_winnings > balance::value(winning_pool_balance)){
+    if (user_winnings > balance::value(winning_pool_balance)) {
         user_winnings = balance::value(winning_pool_balance);
     };
 
@@ -937,7 +944,12 @@ public fun get_market_state_test_only(markets_obj: &Markets, market_id: u64): (u
 
 #[test_only]
 /// Helper function to resolve a market in tests
-public fun resolve_market_test_only(markets_obj: &mut Markets, market_id: u64, outcome: u8, _clock: &Clock) {
+public fun resolve_market_test_only(
+    markets_obj: &mut Markets,
+    market_id: u64,
+    outcome: u8,
+    _clock: &Clock,
+) {
     // Validate the market ID exists
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
     let market = table::borrow_mut(&mut markets_obj.markets, market_id);
@@ -1026,7 +1038,8 @@ public fun buy_shares_test_only(
     assert!(market.yes_price + market.no_price == BASIS_POINTS, ECalculationError);
 
     // Update market total liquidity tracking
-    market.total_liquidity = balance::value(&market.yes_liquidity) + balance::value(&market.no_liquidity);
+    market.total_liquidity =
+        balance::value(&market.yes_liquidity) + balance::value(&market.no_liquidity);
 
     // Update user position in the positions table
     let sender = tx_context::sender(ctx);
@@ -1040,7 +1053,11 @@ public fun buy_shares_test_only(
     let user_market_position = if (vec_map::contains(user_positions_map, &market_id)) {
         vec_map::get_mut(user_positions_map, &market_id)
     } else {
-        vec_map::insert(user_positions_map, market_id, UserPosition { yes_shares: 0, no_shares: 0 });
+        vec_map::insert(
+            user_positions_map,
+            market_id,
+            UserPosition { yes_shares: 0, no_shares: 0 },
+        );
         vec_map::get_mut(user_positions_map, &market_id)
     };
 
@@ -1088,7 +1105,7 @@ public fun claim_winnings_test_only(
     market_id: u64,
     _yes_coins: Coin<YES_COIN>, // Accept coins but don't use them
     _no_coins: Coin<NO_COIN>,
-    ctx: &mut TxContext
+    ctx: &mut TxContext,
 ) {
     // 1. Check that market exists and is resolved
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
@@ -1152,7 +1169,7 @@ public fun claim_winnings_test_only(
     };
 
     // Ensure we don't try to split more than available in the pool
-    if (user_winnings > balance::value(winning_pool_balance)){
+    if (user_winnings > balance::value(winning_pool_balance)) {
         user_winnings = balance::value(winning_pool_balance);
     };
 
