@@ -23,15 +23,23 @@ public fun package_version(): u64 { VERSION }
 public struct PREDICTPLAY has drop {}
 
 // === Errors ===
-const EMarketNotFound: u64 = 0;
-const EMarketAlreadyClosed: u64 = 1;
-const EMarketAlreadyResolved: u64 = 2;
-const EInsufficientFunds: u64 = 3;
-const EMarketNotClosed: u64 = 6;
-const EPositionNotFound: u64 = 8; // Error for user position lookup failure
-const ECalculationError: u64 = 91; // Error for mathematical calculation issues
-const EPeriodTooSmall: u64 = 10; // Error for period too small
-const EOutcomeError: u64 = 11;
+const EMarketNotFound: u64 = 100;
+const EMarketAlreadyClosed: u64 = 101;
+const EMarketAlreadyResolved: u64 = 102;
+const EInsufficientFunds: u64 = 103;
+const EMarketNotClosed: u64 = 104;
+const EPositionNotFound: u64 = 105; // Error for user position lookup failure
+const ECalculationError: u64 = 106; // Error for mathematical calculation issues
+const EPeriodTooSmall: u64 = 107; // Error for period too small
+const EOutcomeError: u64 = 108;
+
+// Debug error codes
+const EDebugPriceCalculation: u64 = 201;
+const EDebugSharesUpdate: u64 = 202;
+const EDebugPriceChange: u64 = 203;
+const EDebugPriceAdjustment: u64 = 204;
+const EDebugLiquiditySplit: u64 = 205;
+const EDebugInsufficientLiquidity: u64 = 206;
 
 // === Market Status ===
 const MARKET_STATUS_ACTIVE: u8 = 0;
@@ -358,7 +366,7 @@ public fun calculate_sui_needed_for_shares(
     if (is_yes) {
         // For YES shares: amount = shares * price
         // Convert price from basis points (10000 = 100%) to decimal
-        let price_decimal = (market.yes_price as u128) * 100 / (BASIS_POINTS as u128);
+        let price_decimal = (market.yes_price as u128) * 100 / (BASIS_POINTS as u128); // Convert to decimal (0-100)
         // Calculate required amount (price is per share)
         // price_decimal is in percentage format (0-100), so we divide by 100 to get actual multiplier
         let sui_amount = (shares_amount as u128) * price_decimal / 100;
@@ -577,6 +585,10 @@ public entry fun sell_shares(
     _slip: u64,
     ctx: &mut TxContext,
 ) {
+    assert!(shares_amount > 0, EInsufficientFunds);
+    assert!(coin::value(&yes_coins) == (if (is_yes) { shares_amount } else { 0 }), EInsufficientFunds);
+    assert!(coin::value(&no_coins) == (if (!is_yes) { shares_amount } else { 0 }), EInsufficientFunds);
+
     // 1. Get market and check status/time
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
     let market = table::borrow_mut(&mut markets_obj.markets, market_id);
@@ -613,21 +625,29 @@ public entry fun sell_shares(
 
     if (is_yes) {
         // Calculate SUI to return: shares * price / 100 (price is in percentage)
+        assert!(market.yes_price > 0, EDebugPriceCalculation);
         let price_decimal = (market.yes_price as u128) * 100 / (BASIS_POINTS as u128); // Convert to decimal (0-100)
         let sui_amount_u128 = (shares_amount as u128) * price_decimal / 100;
         sui_return_amount = (sui_amount_u128 as u64);
+        assert!(sui_return_amount > 0, EDebugPriceCalculation);
 
         // 4. Update user position
+        assert!(user_market_position.yes_shares >= shares_amount, EDebugSharesUpdate);
         user_market_position.yes_shares = user_market_position.yes_shares - shares_amount;
+        assert!(market.yes_shares >= shares_amount, EDebugSharesUpdate);
         market.yes_shares = market.yes_shares - shares_amount;
 
         // 5. Update market prices - decrease YES price, increase NO price
+        assert!(market.total_liquidity > 0, EDebugPriceChange);
         let price_change = calculate_price_change(sui_return_amount, market.total_liquidity);
+        assert!(price_change > 0, EDebugPriceChange);
 
         // Ensure we don't exceed 100% or go below 0%
         if (price_change < market.yes_price) {
+            assert!(price_change <= market.yes_price, EDebugPriceAdjustment);
             market.yes_price = market.yes_price - price_change;
             market.no_price = market.no_price + price_change;
+            assert!(market.yes_price + market.no_price == BASIS_POINTS, EDebugPriceAdjustment);
         } else {
             // Cap at 99% probability to avoid extreme prices
             market.yes_price = 100; // 1%
@@ -636,6 +656,11 @@ public entry fun sell_shares(
 
         // 6. Take SUI from YES balance and return to user
         // Create a coin from the split balance and transfer to the user
+        assert!(balance::value(&market.yes_liquidity) > 0, EDebugLiquiditySplit);
+        assert!(
+            balance::value(&market.yes_liquidity) >= sui_return_amount,
+            EDebugInsufficientLiquidity,
+        );
         let balance_split = balance::split(&mut market.yes_liquidity, sui_return_amount);
         let coin_to_return = coin::from_balance(balance_split, ctx);
         sui::transfer::public_transfer(coin_to_return, sender);
@@ -643,21 +668,29 @@ public entry fun sell_shares(
         // We'll burn the coins at the end of the function
     } else {
         // Calculate SUI to return: shares * price / 100 (price is in percentage)
+        assert!(market.no_price > 0, EDebugPriceCalculation);
         let price_decimal = (market.no_price as u128) * 100 / (BASIS_POINTS as u128); // Convert to decimal (0-100)
         let sui_amount_u128 = (shares_amount as u128) * price_decimal / 100;
         sui_return_amount = (sui_amount_u128 as u64);
+        assert!(sui_return_amount > 0, EDebugPriceCalculation);
 
         // 4. Update user position
+        assert!(user_market_position.no_shares >= shares_amount, EDebugSharesUpdate);
         user_market_position.no_shares = user_market_position.no_shares - shares_amount;
+        assert!(market.no_shares >= shares_amount, EDebugSharesUpdate);
         market.no_shares = market.no_shares - shares_amount;
 
         // 5. Update market prices - decrease NO price, increase YES price
+        assert!(market.total_liquidity > 0, EDebugPriceChange);
         let price_change = calculate_price_change(sui_return_amount, market.total_liquidity);
+        assert!(price_change > 0, EDebugPriceChange);
 
         // Ensure we don't exceed 100% or go below 0%
         if (price_change < market.no_price) {
+            assert!(price_change <= market.no_price, EDebugPriceAdjustment);
             market.no_price = market.no_price - price_change;
             market.yes_price = market.yes_price + price_change;
+            assert!(market.yes_price + market.no_price == BASIS_POINTS, EDebugPriceAdjustment);
         } else {
             // Cap at 99% probability to avoid extreme prices
             market.no_price = 100; // 1%
@@ -666,6 +699,11 @@ public entry fun sell_shares(
 
         // 6. Take SUI from NO balance and return to user
         // Create a coin from the split balance and transfer to the user
+        assert!(balance::value(&market.no_liquidity) > 0, EDebugLiquiditySplit);
+        assert!(
+            balance::value(&market.no_liquidity) >= sui_return_amount,
+            EDebugInsufficientLiquidity,
+        );
         let balance_split = balance::split(&mut market.no_liquidity, sui_return_amount);
         let coin_to_return = coin::from_balance(balance_split, ctx);
         sui::transfer::public_transfer(coin_to_return, sender);
@@ -691,9 +729,15 @@ public entry fun sell_shares(
     };
 
     // 9. Now that we're done with all operations that borrow markets_obj, we can burn the coins
-    // Burn both YES and NO coins to ensure all Coin values are properly consumed, regardless of branch
-    burn_yes_coins(markets_obj, yes_coins);
-    burn_no_coins(markets_obj, no_coins);
+    // Only burn the coins that correspond to the shares being sold
+    // The other coins should be zero and will be destroyed with destroy_zero
+    if (is_yes) {
+        burn_yes_coins(markets_obj, yes_coins);
+        coin::destroy_zero(no_coins);
+    } else {
+        burn_no_coins(markets_obj, no_coins);
+        coin::destroy_zero(yes_coins);
+    };
 
     // 10. Emit event for position close
     let event = PositionClosed {
