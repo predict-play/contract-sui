@@ -240,6 +240,28 @@ public entry fun create_market(
     period_minutes: u64,
     ctx: &mut TxContext,
 ) {
+    create_market_base(markets_obj, game_id, name, clock, period_minutes, ctx);
+}
+
+public entry fun create_market_without_admin(
+    markets_obj: &mut Markets,
+    game_id: u64,
+    name: String, // Function receives ownership of name
+    clock: &Clock, // Need Clock object to get current time
+    period_minutes: u64,
+    ctx: &mut TxContext,
+) {
+    create_market_base(markets_obj, game_id, name, clock, period_minutes, ctx);
+}
+
+public fun create_market_base(
+    markets_obj: &mut Markets,
+    game_id: u64,
+    name: String, // Function receives ownership of name
+    clock: &Clock, // Need Clock object to get current time
+    period_minutes: u64,
+    ctx: &mut TxContext,
+) {
     // Set market end time to period minutes from now
     let current_timestamp = clock::timestamp_ms(clock);
     assert!(period_minutes >= 1, EPeriodTooSmall);
@@ -621,8 +643,14 @@ public entry fun sell_shares(
     ctx: &mut TxContext,
 ) {
     assert!(shares_amount > 0, EInsufficientFunds);
-    assert!(coin::value(&yes_coins) == (if (is_yes) { shares_amount } else { 0 }), EInsufficientFunds);
-    assert!(coin::value(&no_coins) == (if (!is_yes) { shares_amount } else { 0 }), EInsufficientFunds);
+    assert!(
+        coin::value(&yes_coins) == (if (is_yes) { shares_amount } else { 0 }),
+        EInsufficientFunds,
+    );
+    assert!(
+        coin::value(&no_coins) == (if (!is_yes) { shares_amount } else { 0 }),
+        EInsufficientFunds,
+    );
 
     // 1. Get market and check status/time
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
