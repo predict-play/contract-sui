@@ -344,6 +344,41 @@ public fun get_markets_list(markets_obj: &Markets, start: u64, limit: u64): vect
     market_infos
 }
 
+/// Returns markets by game_id
+public fun get_markets_by_game_id(markets_obj: &Markets, game_id: u64): vector<MarketInfo> {
+    let mut market_infos = vector::empty<MarketInfo>();
+    let mut cursor = 0;
+    let max_id = markets_obj.next_market_id_counter;
+
+    // Iterate through all markets to find matching game_id
+    while (cursor < max_id) {
+        if (table::contains(&markets_obj.markets, cursor)) {
+            let market = table::borrow(&markets_obj.markets, cursor);
+            if (market.game_id == game_id) {
+                vector::push_back(
+                    &mut market_infos,
+                    MarketInfo {
+                        market_id: cursor,
+                        game_id: market.game_id,
+                        name: market.name,
+                        end_time: market.end_time,
+                        yes_price: market.yes_price,
+                        no_price: market.no_price,
+                        yes_liquidity: balance::value(&market.yes_liquidity),
+                        no_liquidity: balance::value(&market.no_liquidity),
+                        status: market.status,
+                        total_liquidity: market.total_liquidity,
+                        creator: market.creator,
+                        resolved_outcome: market.resolved_outcome,
+                    },
+                );
+            }
+        };
+        cursor = cursor + 1;
+    };
+    market_infos
+}
+
 /// Returns the current prices of a market (yes price, no price, total liquidity)
 public fun get_market_prices(markets_obj: &Markets, market_id: u64): (u64, u64, u64) {
     assert!(table::contains(&markets_obj.markets, market_id), EMarketNotFound);
